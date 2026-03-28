@@ -1466,6 +1466,103 @@ namespace ErenshorSkills.Patches
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // SPELL TOOLTIP — Show magic school on spell details
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Inject magic school into the spell details window (right-click item procs,
+    /// hotbar spell info). Hooks ItemInfoWindow.LoadSpellDetails.
+    /// </summary>
+    [HarmonyPatch(typeof(ItemInfoWindow), "LoadSpellDetails")]
+    public static class Patch_SpellTooltip
+    {
+        public static void Postfix(ItemInfoWindow __instance, Spell AssignedSpell)
+        {
+            if (!SkillsPlugin.CfgEnableMagicSkills.Value) return;
+            if (AssignedSpell == null) return;
+            try
+            {
+                var school = Skills.MagicSkills.ClassifySpell(AssignedSpell);
+                if (school == Skills.MagicSkills.MagicSchool.None) return;
+                string tag = GetSchoolTag(school);
+                if (__instance.SpellDetailsDesc != null)
+                    __instance.SpellDetailsDesc.text += "\n" + tag;
+            }
+            catch { }
+        }
+
+        public static string GetSchoolTag(Skills.MagicSkills.MagicSchool school)
+        {
+            switch (school)
+            {
+                case Skills.MagicSkills.MagicSchool.Evocation:
+                    return "<color=#FF6B35>School: Evocation</color>";
+                case Skills.MagicSkills.MagicSchool.Abjuration:
+                    return "<color=#4FC3F7>School: Abjuration</color>";
+                case Skills.MagicSkills.MagicSchool.Alteration:
+                    return "<color=#66BB6A>School: Alteration</color>";
+                case Skills.MagicSkills.MagicSchool.Conjuration:
+                    return "<color=#AB47BC>School: Conjuration</color>";
+                default:
+                    return "";
+            }
+        }
+    }
+
+    /// <summary>
+    /// Inject magic school into the spell book tooltip.
+    /// When a spell is selected in the spell book, ToggleSelect builds
+    /// the description text and sets it on the Desc TextMeshProUGUI field.
+    /// We postfix to append the school name.
+    /// </summary>
+    [HarmonyPatch(typeof(SpellbookSlot), "ToggleSelect")]
+    public static class Patch_SpellBookTooltip
+    {
+        public static void Postfix(SpellbookSlot __instance, bool _selected)
+        {
+            if (!SkillsPlugin.CfgEnableMagicSkills.Value) return;
+            if (!_selected) return;
+            if (__instance.AssignedSpell == null) return;
+            try
+            {
+                var school = Skills.MagicSkills.ClassifySpell(__instance.AssignedSpell);
+                if (school == Skills.MagicSkills.MagicSchool.None) return;
+                string tag = Patch_SpellTooltip.GetSchoolTag(school);
+                if (__instance.Desc != null)
+                    __instance.Desc.text += "\n" + tag;
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>
+    /// Inject magic school into the hotbar hover tooltip.
+    /// When the player hovers over a spell on the hotbar, Hotkeys.OnPointerEnter
+    /// populates GameData.Misc.SpellDesc. We postfix to append school info.
+    /// </summary>
+    [HarmonyPatch(typeof(Hotkeys), "OnPointerEnter")]
+    public static class Patch_HotbarSpellTooltip
+    {
+        public static void Postfix(Hotkeys __instance)
+        {
+            if (!SkillsPlugin.CfgEnableMagicSkills.Value) return;
+            try
+            {
+                // Only for spell-type hotkeys
+                if (__instance.thisHK != Hotkeys.HKType.Spell) return;
+                if (__instance.AssignedSpell == null) return;
+
+                var school = Skills.MagicSkills.ClassifySpell(__instance.AssignedSpell);
+                if (school == Skills.MagicSkills.MagicSchool.None) return;
+                string tag = Patch_SpellTooltip.GetSchoolTag(school);
+                if (GameData.Misc?.SpellDesc != null)
+                    GameData.Misc.SpellDesc.text += "\n" + tag;
+            }
+            catch { }
+        }
+    }
+
     // CHAT COMMANDS
     // ═══════════════════════════════════════════════════════════════════
 
