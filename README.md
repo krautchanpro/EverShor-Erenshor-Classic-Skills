@@ -30,7 +30,7 @@ An EverQuest-inspired skills and tradeskills mod for [Erenshor](https://store.st
 
 ### Skills System (25 Skills)
 
-Press **F8** (configurable) to open the Skills window. Skills level up through use via an EQ-style skill-up chance system with a trivial cap. Training Points (3 per player level) can be spent to manually raise skills. Skill cap formula: `(PlayerLevel × 5) + 5` — max 180 at level 35.
+Press **F8** (configurable) to open the Skills window. Skills level up through use and via an EQ-style skill-up chance system with a trivial cap. Training Points (3 per player level) can be spent to manually raise skills. Skills will not start leveling up till you put a training point in it. Skill cap formula: `(PlayerLevel × 5) + 5` — max 180 at level 35.
 
 **Utility Skills (7):**
 - **Fishing** — XP on every catch; higher skill = more nibbles = better catch rate
