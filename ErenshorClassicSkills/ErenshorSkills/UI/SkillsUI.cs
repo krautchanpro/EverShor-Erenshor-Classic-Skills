@@ -81,7 +81,10 @@ namespace ErenshorSkills
         void LateUpdate()
         {
             if (_built && _showWindow && _canvasGO && _canvasGO.activeSelf)
+            {
                 Refresh();
+                UpdateTooltip();
+            }
         }
 
         void OnDestroy() { if (_canvasGO) Destroy(_canvasGO); }
@@ -198,6 +201,9 @@ namespace ErenshorSkills
 
             // SET CONTENT HEIGHT — this is the key line
             _contentParent.sizeDelta = new Vector2(0, cy);
+
+            // Build tooltip overlay
+            BuildTooltip();
 
             SkillsPlugin.Log.LogInfo($"SkillsUI: content height = {cy:F0}px, " +
                 $"scroll viewport = {scrollH:F0}px");
@@ -321,6 +327,9 @@ namespace ErenshorSkills
             Img(cRT, C_Panel);
             PlaceAt(cRT, y, ROW);
 
+            // Attach tooltip hover
+            AttachTooltip(cRT, skill.Name);
+
             // Name (top-left, top 20px of row)
             row.nameText = Txt(cRT, skill.Name, 12, accent, TextAnchor.MiddleLeft);
             row.nameText.fontStyle = FontStyle.Bold;
@@ -387,6 +396,9 @@ namespace ErenshorSkills
             var cRT = Rect(_contentParent, info.Name);
             Img(cRT, C_Panel);
             PlaceAt(cRT, y, ROW);
+
+            // Attach tooltip hover
+            AttachTooltip(cRT, info.Name);
 
             // Name (top-left)
             row.nameText = Txt(cRT, info.Name, 12, accent, TextAnchor.MiddleLeft);
@@ -780,6 +792,162 @@ namespace ErenshorSkills
             public SkillEntry skill;
         }
         class BonusRowUI { public string key; public Text valueText; }
+
+        // ── Tooltip system ────────────────────────────────────────────
+
+        static GameObject _tooltipGO;
+        static Text _tooltipText;
+        static RectTransform _tooltipRT;
+
+        static readonly Dictionary<string, string> SkillTooltips = new Dictionary<string, string>
+        {
+            // Utility
+            {"Fishing", "Levels from catching fish.\nHigher skill = more nibbles per cast = better catch rate.\nAlso awards Raw Fish, Moongill Trout, and Golden Carp for Baking recipes."},
+            {"Foraging", "Press F9 to search the ground for herbs, roots, and materials.\nHigher skill unlocks rarer finds and reduces failures."},
+            {"Swimming", "Levels up by swimming in water while moving.\n+0.3% swim speed per level."},
+            {"Bind Wound", "Press F10 to heal out of combat.\n+0.15% max HP healed per level."},
+            {"Meditate", "Press M to sit and regenerate mana.\nWorks in combat. Higher skill = faster mana regen."},
+            {"Food Tolerance", "Levels when you consume food or drink buffs.\n+0.5% buff duration per level."},
+            {"Begging", "Press ; to ask nearby NPCs for handouts.\nCan receive gold, items, or lore tidbits."},
+            // Combat
+            {"1H Slashing", "Swords, scimitars, axes.\n+0.085% melee damage per level.\nLevels from landing hits with 1H slashing weapons."},
+            {"1H Blunt", "Maces, hammers, clubs.\n+0.085% melee damage per level.\nLevels from landing hits with 1H blunt weapons."},
+            {"Piercing", "Daggers, dirks, rapiers.\n+0.085% melee damage per level.\nLevels from landing hits with piercing weapons."},
+            {"2H Slashing", "Greatswords, claymores, halberds.\n+0.085% melee damage per level.\nLevels from landing hits with 2H slashing weapons."},
+            {"2H Blunt", "Mauls, warhammers, staves.\n+0.085% melee damage per level.\nLevels from landing hits with 2H blunt weapons."},
+            {"Archery", "Bows and ranged weapons.\n+0.085% ranged damage per level.\nLevels from landing hits with bows."},
+            {"Wands", "Magical wands.\n+0.085% wand damage per level.\nLevels from landing wand hits."},
+            {"Hand to Hand", "Unarmed combat.\n+0.085% melee damage per level.\nLevels when fighting with no weapon equipped."},
+            // Tradeskills
+            {"Smithing", "Forge weapons, armor, shields, and intermediates.\nCraft at a Forge or Anvil.\n52 recipes from starter to endgame."},
+            {"Baking", "Cook food with stat buffs from herbs, meat, and fish.\nCraft at an Oven, Stove, or Campfire.\n55 recipes including fish dishes."},
+            {"Brewing", "Brew drinks and potions with stat buffs.\nCraft at a Brew Barrel or Keg.\n46 recipes from grog to cosmic elixirs."},
+            {"Fletching", "Craft bows and ranged weapons from wood and sinew.\nCraft at a Fletching Table.\n29 recipes from crude shortbows to endgame."},
+            {"Jewelcraft", "Create rings, necklaces, circlets, and charms.\nCraft at a Jeweler's Kit.\n47 recipes using gems and precious metals."},
+            {"Tailoring", "Sew cloth and leather armor, cloaks, and bags.\nCraft at a Loom.\n51 recipes including 4 bag sizes."},
+            // Magic
+            {"Evocation", "Direct damage spells (nukes, AE, PBAE).\n+0.08% spell damage per level.\nMax bonus: +14.4% at skill 180."},
+            {"Abjuration", "Buff and ward spells.\n+0.3% buff duration per level.\nMax bonus: +54% at skill 180."},
+            {"Alteration", "Healing spells.\n+0.08% heal amount per level.\nMax bonus: +14.4% at skill 180."},
+            {"Conjuration", "DoTs, pets, and status effects.\n+0.08% DoT damage per level.\nMax bonus: +14.4% at skill 180."},
+        };
+
+        void BuildTooltip()
+        {
+            _tooltipGO = new GameObject("SkillTooltip");
+            _tooltipGO.transform.SetParent(_canvasGO.transform, false);
+            _tooltipRT = _tooltipGO.AddComponent<RectTransform>();
+            _tooltipRT.pivot = V(0, 1);
+            _tooltipRT.sizeDelta = V(260, 80);
+
+            var bg = Img(_tooltipRT, c(0.05f, 0.08f, 0.10f, 0.96f));
+            bg.raycastTarget = false;
+            Fill(bg.rectTransform);
+            var outline = _tooltipGO.AddComponent<Outline>();
+            outline.effectColor = C_Border;
+            outline.effectDistance = new Vector2(1, -1);
+
+            _tooltipText = Txt(_tooltipRT, "", 11, c(0.85f, 0.85f, 0.85f),
+                TextAnchor.UpperLeft);
+            _tooltipText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            _tooltipText.verticalOverflow = VerticalWrapMode.Overflow;
+            _tooltipText.rectTransform.anchorMin = V(0, 0);
+            _tooltipText.rectTransform.anchorMax = V(1, 1);
+            _tooltipText.rectTransform.offsetMin = V(8, 6);
+            _tooltipText.rectTransform.offsetMax = V(-8, -6);
+
+            _tooltipGO.SetActive(false);
+        }
+
+        // Store all row RectTransforms with their skill names for mouse tracking
+        readonly List<(RectTransform rt, string name)> _tooltipRows = new List<(RectTransform, string)>();
+        string _lastTooltipSkill = "";
+
+        void UpdateTooltip()
+        {
+            if (_tooltipGO == null) return;
+
+            // Check if mouse is over the skills window at all
+            Vector2 mouseScreen = Input.mousePosition;
+            Vector2 localMouse;
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                _windowPanel, mouseScreen, null, out localMouse);
+
+            // Check if mouse is within the window bounds
+            bool inWindow = _windowPanel.rect.Contains(localMouse);
+            if (!inWindow)
+            {
+                if (_tooltipGO.activeSelf) { _tooltipGO.SetActive(false); _lastTooltipSkill = ""; }
+                return;
+            }
+
+            // Check each row to see if mouse is over it
+            string hoveredSkill = null;
+            Vector3 hoveredWorldPos = Vector3.zero;
+            foreach (var (rt, name) in _tooltipRows)
+            {
+                if (rt == null) continue;
+                Vector2 rowLocal;
+                RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                    rt, mouseScreen, null, out rowLocal);
+                if (rt.rect.Contains(rowLocal))
+                {
+                    hoveredSkill = name;
+                    hoveredWorldPos = rt.position;
+                    break;
+                }
+            }
+
+            if (hoveredSkill == null)
+            {
+                if (_tooltipGO.activeSelf) { _tooltipGO.SetActive(false); _lastTooltipSkill = ""; }
+                return;
+            }
+
+            // Show tooltip for hovered skill
+            if (hoveredSkill != _lastTooltipSkill)
+            {
+                string desc;
+                if (!SkillTooltips.TryGetValue(hoveredSkill, out desc))
+                {
+                    _tooltipGO.SetActive(false); _lastTooltipSkill = ""; return;
+                }
+                _tooltipText.text = $"<color=#FFD700>{hoveredSkill}</color>\n{desc}";
+                _lastTooltipSkill = hoveredSkill;
+            }
+
+            // Position tooltip to the right of the window, clamped to screen
+            _tooltipRT.anchorMin = V(0, 1);
+            _tooltipRT.anchorMax = V(0, 1);
+
+            Vector2 canvasLocal;
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                _tooltipGO.transform.parent as RectTransform,
+                mouseScreen, null, out canvasLocal);
+
+            float tooltipH = Mathf.Max(60, _tooltipText.preferredHeight + 16);
+            _tooltipRT.sizeDelta = V(260, tooltipH);
+
+            // Place to right of window
+            var winPos = _windowPanel.anchoredPosition;
+            float tx = winPos.x + W + 4;
+            float ty = canvasLocal.y + 20;
+
+            // Clamp to keep tooltip on screen (canvas coords, top-left origin)
+            // Reference resolution is 1920x1080, anchored top-left
+            float minY = -(1080f - 20f);  // don't go below screen
+            float maxY = -20f;              // don't go above screen
+            ty = Mathf.Clamp(ty, minY + tooltipH, maxY);
+
+            _tooltipRT.anchoredPosition = V(tx, ty);
+            _tooltipGO.SetActive(true);
+        }
+
+        /// <summary>Register a row for tooltip tracking.</summary>
+        void AttachTooltip(RectTransform rowContainer, string skillName)
+        {
+            _tooltipRows.Add((rowContainer, skillName));
+        }
 
         // ── Helper components ─────────────────────────────────────────
 
