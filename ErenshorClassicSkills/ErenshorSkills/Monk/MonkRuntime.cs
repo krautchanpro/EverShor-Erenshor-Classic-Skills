@@ -73,10 +73,25 @@ namespace ErenshorSkills.Monk
                     out MonkTechniqueDefinition definition))
                 return true;
             Stats stats = user?.GetComponent<Stats>();
-            if (stats == null || !MonkCatalog.IsMonkClass(stats.CharacterClass))
+            Character actor = user != null ? user.GetComponent<Character>() : null;
+            if (SkillsPlugin.CfgEnableMonk?.Value != true || stats == null ||
+                !MonkCatalog.IsMonkClass(stats.CharacterClass))
             {
-                ChatHelper.SendCombat(
+                if (actor != null && !actor.isNPC) ChatHelper.SendCombat(
                     "Only a Monk can use that technique.", "#E7C76F");
+                result = false;
+                return false;
+            }
+            float reach = definition.Kind == MonkTechniqueKind.StoneThrow ? 18f : 5f;
+            bool npcTargetMatches = actor?.MyNPC != null &&
+                actor.MyNPC.CurrentAggroTarget == target;
+            if (!MonkCombatPolicy.CanActivate(actor != null && actor.Alive,
+                actor != null && actor.isNPC, definition.IsOffensive,
+                target != null && target.Alive, target == actor,
+                npcTargetMatches, target != null && actor != null
+                    ? (target.transform.position - actor.transform.position).sqrMagnitude
+                    : float.PositiveInfinity, reach))
+            {
                 result = false;
                 return false;
             }
@@ -102,7 +117,7 @@ namespace ErenshorSkills.Monk
                 // Utility techniques complete entirely inside this prefix and
                 // therefore never receive a SkillUseState in the postfix.
                 if (result && IsRestorativeTechnique(definition.Kind) &&
-                    MonkCatalog.IsMonkPlayer())
+                    actor == GameData.PlayerControl?.Myself)
                     AwardAlterationUse(definition);
                 return false;
             }
@@ -143,6 +158,12 @@ namespace ErenshorSkills.Monk
                     out MonkTechniqueDefinition definition))
                 return true;
             Character character = caster?.MyChar;
+            if (character == null || SkillsPlugin.CfgEnableMonk?.Value != true ||
+                !MonkCatalog.IsMonkClass(character.MyStats?.CharacterClass))
+            {
+                result = false;
+                return false;
+            }
             UseSkill skillUser = character?.MySkills;
             Skill backingSkill = MonkCatalog.GetSkill(definition.Key);
             if (character == null || skillUser == null ||
@@ -168,16 +189,20 @@ namespace ErenshorSkills.Monk
 
             Character target = definition.IsOffensive
                 ? requestedTarget?.Myself ??
-                  GameData.PlayerControl?.CurrentTarget
+                  (character.isNPC ? character.MyNPC?.CurrentAggroTarget
+                    : GameData.PlayerControl?.CurrentTarget)
                 : character;
-            result = skillUser.DoSkill(backingSkill, target);
+            result = character.isNPC
+                ? skillUser.DoSkillNoChecks(backingSkill, target)
+                : skillUser.DoSkill(backingSkill, target);
             if (SkillsPlugin.CfgEnableTestMode?.Value == true)
                 SkillsPlugin.Log?.LogInfo(
                     $"[Monk Technique] {definition.Key} result={result}");
             if (result)
             {
                 stats.ReduceMana(manaCost);
-                ApplySpellCooldown(spell);
+                if (character == GameData.PlayerControl?.Myself)
+                    ApplySpellCooldown(spell);
                 // Impact VFX is anchored here, on the same call that spends
                 // the mana, rather than deep inside the animation driver whose
                 // impact-release step proved unreliable in play. The driver is
@@ -225,7 +250,8 @@ namespace ErenshorSkills.Monk
             // One award per successful offensive technique, mirroring the one
             // award per weapon swing the native melee path gives. Utility
             // techniques carry Power 0 and train nothing.
-            if (state.Definition.Power > 0 && MonkCatalog.IsMonkPlayer())
+            if (state.Definition.Power > 0 &&
+                state.CasterCharacter == GameData.PlayerControl?.Myself)
                 Skills.CombatSkills.OnTechniqueHit(
                     Skills.CombatSkills.WeaponType.HandToHand,
                     state.Definition.Power *
@@ -494,16 +520,17 @@ namespace ErenshorSkills.Monk
             Stats stats = user?.GetComponent<Stats>();
             Character caster = user?.GetComponent<Character>();
             if (stats == null || caster == null || !caster.Alive) return false;
+            bool localCaster = caster == GameData.PlayerControl?.Myself;
             if (stats.Stunned || stats.Feared)
             {
-                ChatHelper.SendCombat(
+                if (localCaster) ChatHelper.SendCombat(
                     $"You cannot use {definition.Name} while incapacitated.",
                     "#E7C76F");
                 return false;
             }
             if (target == null || !target.Alive || target == caster)
             {
-                ChatHelper.SendCombat(
+                if (localCaster) ChatHelper.SendCombat(
                     $"{definition.Name} requires a living enemy target.",
                     "#E7C76F");
                 return false;
@@ -512,13 +539,17 @@ namespace ErenshorSkills.Monk
                 target.transform.position);
             if (distance > 18f)
             {
-                ChatHelper.SendCombat(
+                if (localCaster) ChatHelper.SendCombat(
                     $"That target is beyond {definition.Name} range.",
                     "#E7C76F");
                 return false;
             }
             if (stats.Invisible) stats.BreakEffectsOnAction();
-            try { GameData.PlayerCombat?.ForceAttackOn(); } catch { }
+            // A Sim's ranged technique must never toggle the local player's
+            // combat state, including while that player is interacting with UI.
+            if (MonkCombatPolicy.ShouldAutoEngagePlayer(localCaster,
+                GameData.AutoEngageAttackOnSkill))
+                GameData.PlayerCombat?.ForceAttackOn();
             MonkAnimationDriver.Play(definition, caster.transform,
                 target.transform);
             if (SkillsPlugin.Instance != null)
@@ -563,16 +594,26 @@ namespace ErenshorSkills.Monk
             if (target.MyNPC != null && !target.MyNPC.SimPlayer)
                 target.MyNPC.ManageAggro(Mathf.Max(rawDamage * 2,
                     stats.Level * 3), caster);
-            if (dealt > 0)
-                UpdateSocialLog.CombatLogAdd(new ChatLogLine(
-                    $"You use {definition.Name} on {target.transform.name} for " +
-                    $"{dealt} physical damage.",
-                    ChatLogLine.LogType.PlayerHits));
-            else
-                UpdateSocialLog.CombatLogAdd(new ChatLogLine(
-                    $"{definition.Name} fails to harm " +
-                    $"{target.transform.name}.",
-                    ChatLogLine.LogType.PlayerHits));
+            LogTechniqueDamage(caster, target, definition, dealt);
+        }
+
+        private static void LogTechniqueDamage(Character caster,
+            Character target, MonkTechniqueDefinition definition, int dealt,
+            bool followUp = false)
+        {
+            bool localPlayer = caster == GameData.PlayerControl?.Myself;
+            string actorName = caster.MyNPC != null
+                ? caster.MyNPC.NPCName : caster.transform.name;
+            if (string.IsNullOrWhiteSpace(actorName)) actorName = caster.transform.name;
+            string source = localPlayer ? "You use" : actorName + " uses";
+            string message = dealt > 0
+                ? $"{source} {definition.Name} on {target.transform.name} for " +
+                    $"{dealt} physical damage" + (followUp ? " (follow-up)." : ".")
+                : (localPlayer ? "Your " : actorName + "'s ") +
+                    $"{definition.Name} fails to harm {target.transform.name}.";
+            UpdateSocialLog.CombatLogAdd(new ChatLogLine(message,
+                localPlayer ? ChatLogLine.LogType.PlayerHits
+                    : ChatLogLine.LogType.OthersHits));
         }
 
         private static IEnumerator FollowUpStrikes(SkillUseState state)
@@ -585,8 +626,18 @@ namespace ErenshorSkills.Monk
                 if (index > 0) yield return new WaitForSeconds(0.15f);
                 Character caster = state.CasterCharacter;
                 Character target = state.TargetCharacter;
-                if (caster == null || target == null || !caster.Alive ||
-                    !target.Alive || !MonkCatalog.IsMonkPlayer()) yield break;
+                if (caster == null || target == null || caster.MyStats == null)
+                    yield break;
+                bool localPlayer = caster == GameData.PlayerControl?.Myself;
+                Character currentTarget = localPlayer
+                    ? GameData.PlayerControl?.CurrentTarget
+                    : caster.MyNPC?.CurrentAggroTarget;
+                if (!MonkCombatPolicy.CanContinueFollowUp(
+                    SkillsPlugin.CfgEnableMonk?.Value == true,
+                    MonkCatalog.IsMonkClass(caster.MyStats.CharacterClass),
+                    caster.Alive, target.Alive, currentTarget == target,
+                    (target.transform.position - caster.transform.position).sqrMagnitude))
+                    yield break;
                 int rawDamage = Mathf.Max(1, Mathf.RoundToInt(
                     caster.MyStats.Level * state.Definition.Power * 0.20f));
                 int dealt;
@@ -605,11 +656,8 @@ namespace ErenshorSkills.Monk
                 {
                     MonkAudio.PlayImpact(state.Definition,
                         target.transform.position + Vector3.up);
-                    UpdateSocialLog.CombatLogAdd(new ChatLogLine(
-                        $"{state.Definition.Name} strikes " +
-                        $"{target.transform.name} " +
-                        $"for {dealt} physical damage.",
-                        ChatLogLine.LogType.PlayerHits));
+                    LogTechniqueDamage(caster, target, state.Definition, dealt,
+                        followUp: true);
                 }
             }
         }
@@ -1192,9 +1240,15 @@ namespace ErenshorSkills.Monk
         }
     }
 
-    [HarmonyPatch(typeof(UseSkill), nameof(UseSkill.DoSkill))]
+    [HarmonyPatch]
     internal static class Patch_MonkUseSkill
     {
+        private static IEnumerable<MethodBase> TargetMethods()
+        {
+            yield return AccessTools.Method(typeof(UseSkill), nameof(UseSkill.DoSkill));
+            yield return AccessTools.Method(typeof(UseSkill), nameof(UseSkill.DoSkillNoChecks));
+        }
+
         private static bool Prefix(UseSkill __instance, Skill _skill,
             Character _target, ref bool __result,
             out MonkRuntime.SkillUseState __state) =>

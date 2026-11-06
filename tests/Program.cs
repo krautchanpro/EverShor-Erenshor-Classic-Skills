@@ -1,5 +1,6 @@
 using System;
 using ErenshorSkills.Necromancer;
+using ErenshorSkills.Monk;
 
 internal static class Program
 {
@@ -25,6 +26,27 @@ internal static class Program
         Check("infinite distance", !ThrallCombatPolicy.CanAreaTaunt(true, false, false, true, float.PositiveInfinity));
         Check("direct taunt within requested 1-2 seconds", ThrallCombatPolicy.DirectTauntCooldown >= 1 && ThrallCombatPolicy.DirectTauntCooldown <= 2);
         Check("area taunt every two seconds", ThrallCombatPolicy.AreaTauntCooldown == 2);
+        Check("Monk player melee at reach", MonkCombatPolicy.CanActivate(true, false, true, true, false, false, 25, 5));
+        Check("dead Monk cannot attack", !MonkCombatPolicy.CanActivate(false, false, true, true, false, true, 1, 5));
+        Check("Monk cannot attack self", !MonkCombatPolicy.CanActivate(true, false, true, true, true, true, 0, 5));
+        Check("Monk cannot attack dead target", !MonkCombatPolicy.CanActivate(true, false, true, false, false, true, 1, 5));
+        Check("Sim Monk requires own aggro target", !MonkCombatPolicy.CanActivate(true, true, true, true, false, false, 1, 5));
+        Check("Sim Monk accepts own aggro target", MonkCombatPolicy.CanActivate(true, true, true, true, false, true, 1, 5));
+        Check("Sim cannot mutate player utility timers", !MonkCombatPolicy.CanActivate(true, true, false, true, true, false, 0, 5));
+        Check("player utility remains allowed", MonkCombatPolicy.CanActivate(true, false, false, true, true, false, 0, 5));
+        Check("melee cannot hit from ranged distance", !MonkCombatPolicy.CanActivate(true, true, true, true, false, true, 100, 5));
+        Check("stone throw remains ranged", MonkCombatPolicy.CanActivate(true, true, true, true, false, true, 100, 18));
+        Check("invalid Monk distance rejected", !MonkCombatPolicy.CanActivate(true, true, true, true, false, true, float.NaN, 5));
+        Check("Sim follow-up uses actor Monk class independently of player", MonkCombatPolicy.CanContinueFollowUp(true, true, true, true, true, 4));
+        Check("non-Monk actor cannot continue a queued Monk attack", !MonkCombatPolicy.CanContinueFollowUp(true, false, true, true, true, 4));
+        Check("retarget cancels queued punches", !MonkCombatPolicy.CanContinueFollowUp(true, true, true, true, false, 4));
+        Check("moving away cancels queued punches", !MonkCombatPolicy.CanContinueFollowUp(true, true, true, true, true, 26));
+        Check("disabling Monk cancels queued punches", !MonkCombatPolicy.CanContinueFollowUp(false, true, true, true, true, 4));
+        Check("dead caster cannot finish queued punches", !MonkCombatPolicy.CanContinueFollowUp(true, true, false, true, true, 4));
+        Check("Sim Resonant Palm cannot activate player autoattack", !MonkCombatPolicy.ShouldAutoEngagePlayer(false, true));
+        Check("Sim cannot activate player autoattack when preference disabled", !MonkCombatPolicy.ShouldAutoEngagePlayer(false, false));
+        Check("player Resonant Palm respects disabled auto-engage preference", !MonkCombatPolicy.ShouldAutoEngagePlayer(true, false));
+        Check("player Resonant Palm can auto-engage when enabled", MonkCombatPolicy.ShouldAutoEngagePlayer(true, true));
         Console.WriteLine(passed + " regression checks passed.");
         return 0;
     }
